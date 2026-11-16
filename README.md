@@ -232,6 +232,7 @@ on every shot, `56.9 s` total):
 ## Repository layout
 
 ```
+AGENTS.md          rules for coding agents (hardware safety, coding, provenance, verification)
 firmware/
   board.h          pin map (single source of truth)
   pwmvid.c         main firmware: timed voltage stage + reset pulse
