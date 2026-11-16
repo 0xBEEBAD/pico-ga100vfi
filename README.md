@@ -143,9 +143,7 @@ can inspect BAR0).
 # Install once (or prefix commands with PYTHONPATH=host)
 pip install -e host/
 
-# Recommended: auto-calibrate v_dip and glitch to Goldilocks in one step.
-# Card-to-card VRM and die variation means the optimal dip voltage differs
-# between boards — adaptive finds it for your card automatically.
+# Recommended: pick v_dip automatically per shot (see docs/ADAPTIVE.md).
 sudo python3 -m ga100vfi campaign --bdf 0000:1a:00.0 --adaptive
 
 # If you already know your card's v_dip (e.g. from a previous adaptive run):
@@ -160,7 +158,9 @@ sudo python3 -m ga100vfi revert                         # hand VRM back to PWM-V
 
 `campaign` fires at most `--budget` attempts (default 500). It exits `0` in the
 Goldilocks state with a JSON verdict on stdout and the VRM already handed back to
-stock PWM-VID control, or `1` when the budget runs out.
+stock PWM-VID control, or `1` when the budget runs out. `--adaptive` picks `v_dip`
+per shot from the outcomes so far; how, and its results, are in
+[`docs/ADAPTIVE.md`](docs/ADAPTIVE.md).
 
 Each Goldilocks run, adaptive or not, appends one JSON line to `--log` (default
 `goldilocks.jsonl` in the working directory): local time with UTC offset, the board
@@ -169,70 +169,6 @@ count, and the winning glitch profile (every `g` parameter, as in
 `host/ga100vfi/glitch.py` `Attempt`). Replay a profile with `attempt`, or reuse its
 `v_dip_mv` with `campaign --v-dip`. The file holds your card's serial; keep it out of
 anything you publish.
-
-### Adaptive calibration (`--adaptive`)
-
-The optimal `v_dip` varies between boards due to MP2888B VRM tolerance and
-die leakage — what works on one card may be too shallow or too deep on another.
-With `--adaptive`, every attempt is classified as **under** (dsov=1, dip too
-shallow), **over** (dsov=0 with bad CRC or PCIe link lost, dip too deep), or **hit**
-(dsov=0 with CRC=0x55, in the Goldilocks window), and the next `v_dip` is picked
-per shot from all outcomes so far (`host/ga100vfi/adaptive.py`):
-
-- A model of the card — P(dsov=0) and P(over | dsov=0), each a sigmoid that rises
-  as the dip deepens — is fitted as a particle cloud over its four parameters.
-- A hit that is not Goldilocks failed the other checks, so each PMBus code
-  (6.25 mV) keeps a count of failed hits; its P(Goldilocks | hit) is
-  Beta(1, 1 + failed hits).
-- Each shot fires the code with the highest P(hit) × P(Goldilocks | hit) under
-  one random draw from both (Thompson sampling). Codes are tried in proportion to
-  the chance they are the best one: a code whose hits keep failing loses share to
-  its neighbours instead of being hammered.
-
-The output JSON reports the last `v_dip` fired (the Goldilocks one on success) and,
-under `spots`, the under/hit/over/lost/goldilocks counts for every `v_dip` fired.
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--budget` | 500 | Total attempts, adaptive or not |
-| `--adaptive` | off | Enable auto-calibration |
-| `--v-dip` | 354 | Dip voltage (mV) without `--adaptive` |
-| `--min-v` | 300 | Safety floor (mV) |
-| `--max-v` | 380 | Safety ceiling (mV) |
-
-Hardware run, 2026-11-16: `campaign --adaptive --budget 200` → Goldilocks on attempt 8,
-`v_dip` 356, 3.2 s. The log line got the InfoROM serial.
-
-| `v_dip` (mV) | 325 | 331 | 344 | 350 | 356 |
-|---|---|---|---|---|---|
-| Outcome | lost | under | lost, lost | lost | under, under, Goldilocks |
-
-The `ours` scenario below predicts hits at 344–350 mV; this card lost the link there.
-
-`python -m ga100vfi.sim [cards]` runs the planner on simulated cards (no hardware).
-`ours` is fitted to the measured card: 14 % Goldilocks per shot at 354 mV,
-over-glitched at ~335 mV (`docs/PROTOCOL.md`). The other scenarios and the planner's
-prior ranges are guesses, not measurements. 400 cards per scenario; each cell is
-P(Goldilocks) % within 100 / 500 attempts, then mean attempts (a miss counts as 500).
-`fixed` = `--v-dip 354`; `oracle` = each card's best code.
-
-| Scenario | adaptive | fixed | oracle |
-|---|---|---|---|
-| ours | 100 / 100, 6 | 100 / 100, 7 | 100 / 100, 2 |
-| random | 100 / 100, 4 | 72 / 81, 124 | 100 / 100, 2 |
-| narrow | 100 / 100, 7 | 72 / 87, 115 | 100 / 100, 3 |
-| edge | 100 / 100, 4 | 39 / 46, 296 | 100 / 100, 2 |
-| drift | 100 / 100, 4 | 71 / 82, 125 | 100 / 100, 2 |
-| jump | 100 / 100, 4 | 80 / 88, 85 | 100 / 100, 2 |
-| flaky | 100 / 100, 4 | 69 / 80, 133 | 100 / 100, 2 |
-| bumpy | 100 / 100, 7 | 66 / 74, 160 | 100 / 100, 3 |
-| low_g | 95 / 100, 26 | 51 / 64, 223 | 99 / 100, 14 |
-| rare | 75 / 98, 81 | 35 / 54, 290 | 88 / 100, 42 |
-| deep_g | 100 / 100, 8 | 58 / 71, 184 | 100 / 100, 3 |
-| dead_codes | 97 / 99, 18 | 33 / 38, 326 | 100 / 100, 5 |
-| dead_rare | 66 / 88, 127 | 20 / 28, 387 | 88 / 97, 55 |
-| needle | 65 / 91, 124 | 12 / 13, 440 | 94 / 100, 27 |
-| bimodal | 99 / 100, 12 | 64 / 80, 151 | 100 / 100, 2 |
 
 ## The glitch
 
@@ -298,6 +234,7 @@ host/
     sim.py         simulated cards for tuning the planner (`python -m ga100vfi.sim`)
     cli.py         `ga100vfi` CLI (`campaign`, `attempt`, `classify`, `baseline`, `revert`)
 docs/
+  ADAPTIVE.md      `campaign --adaptive`: how it picks v_dip, flags, hardware and sim results
   BUILD.md         prerequisites, per-family build, flashing, verification
   PROTOCOL.md      serial command set and firmware safety invariants
   images/          wiring diagram and tap-point photos

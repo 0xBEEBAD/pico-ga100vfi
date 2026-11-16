@@ -40,7 +40,7 @@ Never run a glitch campaign to test a code change.
 | Serial command set and response formats | `firmware/pwmvid.c` | `docs/PROTOCOL.md`, regexes in `host/ga100vfi/glitch.py` (`Card.attempt`, `Card.lock_status`) |
 | Glitch timeline and defaults | `firmware/pwmvid.c` (`glitch_cmd`) | README "The glitch", `docs/PROTOCOL.md` "Glitch" |
 | Debug vs normal build behaviour | `firmware/CMakeLists.txt`, `#ifdef DEBUG` in `pwmvid.c` | README "Debug build", `docs/BUILD.md` debug/normal table |
-| CLI flags and defaults | `host/ga100vfi/cli.py` | README "Host usage" / adaptive flag table |
+| CLI flags and defaults | `host/ga100vfi/cli.py` | README "Host usage", `docs/ADAPTIVE.md` flag table |
 
 If code and docs disagree, stop and resolve which is right; do not pick one silently.
 
@@ -114,7 +114,7 @@ cmake -S firmware -B build-debug-pico2  -DPICO_BOARD=pico2 -DBOARD_RP2350A=ON -D
    `glitch.py` and the formats in `docs/PROTOCOL.md`.
 3. **Adaptive planner change** (`host/ga100vfi/adaptive.py`): run
    `python -m ga100vfi.sim 400` before and after, and replace the results table in
-   README "Adaptive calibration" with the new output.
+   `docs/ADAPTIVE.md` with the new output.
 4. **Hardware check (owner's OK required to flash):** `b` → copy the UF2 to the
    `RP2350` drive. Confirm the banner `pwmvid: <n> MHz, wiring: …`, then `v` and `z`.
    A debug build must show `400 MHz` in both the banner and `v`. Before a glitch
