@@ -62,13 +62,10 @@ host client still gets `MATCH` from the unlock and a sane `glitch done` line.**
 | GP1 | I2C SCL → GPU `I2CC_3V3_SCL` | **yes** |
 | GP22 | `PEX_RST_BUF*` — driven low only, then released to high-Z | **yes** |
 | GP42 | ADC2 ← NVVDD rail (direct) | no — trace (`y`) + `nvvdd` readout |
-| GP40 | — | **not connected** (was PWM-VID capture) |
-| GP15 | — | **not connected** (was PWM-VID hand-back; now over PMBus) |
-| GP2 | `PS_VMON_PGOOD` | **not connected** |
 
 A minimal rig is **GP0/GP1 + GP22**. GP42 only feeds the NVVDD trace and the `v`
-readout; it never gates an attempt, and the stock-path hand-back is done over PMBus
-(`E1 = 0xC2EA`), not GP15.
+readout; it never gates an attempt. The stock-path hand-back is done over PMBus
+(`E1 = 0xC2EA`).
 
 ### NVVDD ADC (debug build only)
 

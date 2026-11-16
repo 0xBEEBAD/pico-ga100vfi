@@ -76,7 +76,7 @@ static void clock_init(void) {
 // ------------------------------------------------------------- card control
 // PEX_RST_BUF* carries an external 10k pull-up; drive low to assert, release
 // to high-Z. Never drive high (3.3 V on a 1.8 V net). It is the only pin the
-// firmware drives toward the card; GP2 (PS_VMON_PGOOD) is not connected.
+// firmware drives toward the card.
 static void card_ctl_init(void) {
     gpio_init(PEX_RST_PIN);
     gpio_disable_pulls(PEX_RST_PIN);
