@@ -112,7 +112,10 @@ cmake -S firmware -B build-debug-pico2  -DPICO_BOARD=pico2 -DBOARD_RP2350A=ON -D
    warnings.
 2. **Output-format change:** check the new lines against the host regexes in
    `glitch.py` and the formats in `docs/PROTOCOL.md`.
-3. **Hardware check (owner's OK required to flash):** `b` → copy the UF2 to the
+3. **Adaptive planner change** (`host/ga100vfi/adaptive.py`): run
+   `python -m ga100vfi.sim 400` before and after, and replace the results table in
+   README "Adaptive calibration" with the new output.
+4. **Hardware check (owner's OK required to flash):** `b` → copy the UF2 to the
    `RP2350` drive. Confirm the banner `pwmvid: <n> MHz, wiring: …`, then `v` and `z`.
    A debug build must show `400 MHz` in both the banner and `v`. Before a glitch
    campaign, `u` must return `MATCH` and an attempt must print a sane `glitch done`

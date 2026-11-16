@@ -12,3 +12,5 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+# campaign success log (holds the card's serial)
+goldilocks.jsonl

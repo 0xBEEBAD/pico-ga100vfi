@@ -84,3 +84,27 @@ class Bar0:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+# The PROM (VBIOS + InfoROM flash) is shadowed at BAR0 + 0x300000; the InfoROM lives
+# at PROM offset 0xC0000-0x100000. Its BRD object carries the board serial as ASCII
+# digits 0x28 bytes into the object, behind a 0x10-byte wrapper.
+PROM = 0x300000
+PROM_SIZE = 0x100000
+INFOROM_START, INFOROM_END = 0xC0000, 0x100000
+BRD_MAGIC = b"\x02BRD"
+BRD_SERIAL = 0x10 + 0x28
+
+
+def brd_serial(bar: Bar0) -> str | None:
+    """Board serial from the InfoROM BRD object, or None if there is none."""
+    rom = bytes(bar.mm[PROM:PROM + PROM_SIZE])
+    if rom[:4] != b"NVGI":
+        return None
+    i = rom.find(BRD_MAGIC, INFOROM_START, INFOROM_END)
+    while i >= 0:
+        serial = rom[i + BRD_SERIAL:i + BRD_SERIAL + 16].rstrip(b"\0")
+        if serial.isdigit() and 8 <= len(serial) <= 15:
+            return serial.decode()
+        i = rom.find(BRD_MAGIC, i + 1, INFOROM_END)
+    return None

@@ -5,8 +5,11 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import asdict
+from datetime import datetime
 
-from .bar0 import DEFAULT_BDF, Bar0, restore
+from .adaptive import Planner
+from .bar0 import DEFAULT_BDF, Bar0, brd_serial, restore
 from .classify import classify, snapshot
 from .glitch import Attempt, Card
 
@@ -51,7 +54,7 @@ def _ensure_unlocked(card: Card) -> bool:
 
 
 def _classify_attempt(v) -> str:
-    """Classify a glitch attempt for adaptive calibration.
+    """Classify a glitch attempt for the adaptive planner.
 
     under: dsov=1 (dip too shallow). over: dsov=0 but crc != 0x55 (too deep).
     hit: dsov=0 and crc=0x55 (in the window). goldilocks: all checks pass.
@@ -65,40 +68,10 @@ def _classify_attempt(v) -> str:
     return "over"
 
 
-def _adjust_v_dip(v_dip, step, direction, oc, args):
-    """Pick the next v_dip from a batch's outcome counts.
-
-    Returns (v_dip, step, direction, still_searching).
-    """
-    n_u = oc["under"]
-    n_o = oc["over"] + oc["lost"]
-    n_h = oc["hit"] + oc["goldilocks"]
-
-    if n_h > 0:
-        return v_dip, step, direction, False
-    if n_u > 0 and n_o == 0:
-        new_dir = -1
-        if direction != 0 and new_dir != direction:
-            step = max(step // 2, 6)
-        return max(v_dip - step, args.min_v), step, new_dir, True
-    if n_o > 0 and n_u == 0:
-        new_dir = +1
-        if direction != 0 and new_dir != direction:
-            step = max(step // 2, 6)
-        return min(v_dip + step, args.max_v), step, new_dir, True
-    if n_u > 0 and n_o > 0:
-        return v_dip, max(step // 2, 6), direction, True
-    return v_dip, step, direction, True
-
-
 def cmd_campaign(args) -> int:
+    planner = Planner(args.min_v, args.max_v) if args.adaptive else None
     v_dip = args.v_dip
-    step = args.step
-    direction = 0
-    searching = args.adaptive
-    batch_i = 0
-    batch_oc = None
-    rounds = []
+    spots: dict[int, dict[str, int]] = {}  # adaptive: v_dip -> outcome counts
     t0 = time.monotonic()
     tries = valid = lost = nack = dsov0 = 0
     verdict = None
@@ -109,10 +82,10 @@ def cmd_campaign(args) -> int:
                   file=sys.stderr)
             return 2
         try:
-            while args.max_attempts <= 0 or tries < args.max_attempts:
-                if verdict is not None:
-                    break
+            while tries < args.budget:
                 tries += 1
+                if planner:
+                    v_dip = planner.next_mv()
                 a = Attempt(
                     v_dip_mv=v_dip, t_dip_us=args.t_dip,
                     v_restore_mv=args.v_restore, t_restore_us=args.t_restore,
@@ -131,8 +104,6 @@ def cmd_campaign(args) -> int:
                             _ensure_unlocked(card)
                         except IOError:
                             pass
-                    if args.adaptive:
-                        batch_oc["nack"] += 1
                     continue
                 if rep.writes_failed > 0:
                     nack += 1
@@ -141,56 +112,34 @@ def cmd_campaign(args) -> int:
                             _ensure_unlocked(card)
                         except IOError:
                             pass
-                    if args.adaptive:
-                        batch_oc["nack"] += 1
                     continue
-                if not restore(args.bdf, wait_s=args.restore_wait):
+                outcome = "lost"
+                if restore(args.bdf, wait_s=args.restore_wait):
+                    with Bar0(args.bdf) as bar:
+                        if bar.rd32(0x00) != 0xFFFFFFFF:
+                            v = classify(bar)
+                            outcome = _classify_attempt(v)
+                if outcome == "lost":
                     lost += 1
-                    if args.adaptive:
-                        batch_oc["lost"] += 1
-                    continue
-                with Bar0(args.bdf) as bar:
-                    if bar.rd32(0x00) == 0xFFFFFFFF:
-                        lost += 1
-                        if args.adaptive:
-                            batch_oc["lost"] += 1
-                        continue
-                    v = classify(bar)
-                valid += 1
-                if v.dsov == 0:
-                    dsov0 += 1
-                print(f"[{tries}] valid={valid} lost={lost} dsov={v.dsov} "
-                      f"crc=0x{v.crc_status:02x} priv=0x{v.priv_mask:08x} "
-                      f"{'GOLDILOCKS' if v.passed else ''}",
-                      file=sys.stderr, flush=True)
-                if v.passed:
+                else:
+                    valid += 1
+                    if v.dsov == 0:
+                        dsov0 += 1
+                    print(f"[{tries}] v_dip={v_dip} valid={valid} lost={lost} dsov={v.dsov} "
+                          f"crc=0x{v.crc_status:02x} priv=0x{v.priv_mask:08x} "
+                          f"{'GOLDILOCKS' if v.passed else ''}",
+                          file=sys.stderr, flush=True)
+
+                if planner:
+                    counts = spots.setdefault(v_dip, dict.fromkeys(
+                        ("under", "hit", "over", "lost", "goldilocks"), 0))
+                    counts[outcome] += 1
+                if outcome == "goldilocks":
                     verdict = v
                     break
-
-                if not args.adaptive:
-                    continue
-
-                if batch_i == 0:
-                    batch_oc = {k: 0 for k in
-                                ("goldilocks", "hit", "under", "over", "lost", "nack")}
-                batch_oc[_classify_attempt(v)] += 1
-                batch_i += 1
-
-                if batch_i < args.batch:
-                    continue
-
-                # Batch complete — adjust v_dip
-                rounds.append({"v_dip": v_dip, "outcomes": dict(batch_oc),
-                              "searching": searching})
-                if searching:
-                    v_dip, step, direction, searching = _adjust_v_dip(
-                        v_dip, step, direction, batch_oc, args)
-                    if not searching:
-                        print(f"[adaptive] window found at v_dip={v_dip}",
-                              file=sys.stderr, flush=True)
-                print(f"[adaptive] v_dip={v_dip} step={step} dir={direction} "
-                      f"({batch_oc})", file=sys.stderr, flush=True)
-                batch_i = 0
+                if planner:
+                    # A lost link is a too-deep outcome: the planner reads it as over.
+                    planner.record(v_dip, outcome)
         finally:
             if not args.no_revert:
                 try:
@@ -210,9 +159,27 @@ def cmd_campaign(args) -> int:
         "verdict": verdict.as_dict() if verdict else None,
     }
     if args.adaptive:
-        out["rounds"] = rounds
+        out["spots"] = spots
     print(json.dumps(out, indent=2))
-    return 0 if verdict is not None else 1
+    if verdict is None:
+        return 1
+    with Bar0(args.bdf) as bar:
+        serial = brd_serial(bar)
+    entry = {
+        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "serial": serial,
+        "bdf": args.bdf,
+        "adaptive": args.adaptive,
+        "attempts": tries,
+        "profile": asdict(a),
+    }
+    try:
+        with open(args.log, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as e:
+        # Goldilocks is already reached; a log failure must not turn it into an error.
+        print(f"warn: could not append to {args.log}: {e}", file=sys.stderr)
+    return 0
 
 
 def cmd_revert(args) -> int:
@@ -253,12 +220,16 @@ def main(argv=None) -> int:
     a.add_argument("--trace", action="store_true")
     a.set_defaults(fn=cmd_attempt)
 
-    camp = sub.add_parser("campaign", help="loop glitches until Goldilocks")
+    camp = sub.add_parser("campaign",
+                          help="loop glitches until Goldilocks or the budget runs out")
     camp.add_argument("--port", default="/dev/ttyACM0")
     camp.add_argument("--bdf", default=DEFAULT_BDF)
-    camp.add_argument("--max-attempts", type=int, default=100,
-                      help="0 = unlimited until Goldilocks")
-    camp.add_argument("--v-dip", type=int, default=354)
+    camp.add_argument("--budget", type=int, default=500, help="total attempts")
+    camp.add_argument("--log", default="goldilocks.jsonl",
+                      help="on Goldilocks, append time, card serial, and the glitch "
+                           "profile as one JSON line to this file")
+    camp.add_argument("--v-dip", type=int, default=354,
+                      help="dip voltage in mV (ignored with --adaptive)")
     camp.add_argument("--t-dip", type=int, default=-60)
     camp.add_argument("--v-restore", type=int, default=750)
     camp.add_argument("--t-restore", type=int, default=-20)
@@ -273,13 +244,8 @@ def main(argv=None) -> int:
     camp.add_argument("--no-revert", action="store_true",
                       help="leave VRM in PMBus mode after campaign")
     camp.add_argument("--adaptive", action="store_true",
-                      help="auto-calibrate v_dip: adjust between batches based "
-                           "on under/over/hit outcomes until the Goldilocks "
-                           "window is found, then grind")
-    camp.add_argument("--step", type=int, default=6,
-                      help="adaptive: adjustment step in mV; 6 = one PMBus LSB")
-    camp.add_argument("--batch", type=int, default=5,
-                      help="adaptive: attempts per v_dip before adjusting")
+                      help="pick v_dip each shot by Thompson sampling over a "
+                           "model fitted to the under/hit/over outcomes so far")
     camp.add_argument("--min-v", type=int, default=300,
                       help="adaptive: safety floor (mV)")
     camp.add_argument("--max-v", type=int, default=380,
