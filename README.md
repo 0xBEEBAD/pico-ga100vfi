@@ -46,18 +46,14 @@ state). For the deep dive on how the GA100 fuse controller works, read
 | Connection | Required? | Purpose |
 |---|---|---|
 | `GND` | **yes** | common ground between Pico and GPU PCB |
-| I2C SDA + SCL (`GP0` / `GP1`) | **yes** | PMBus to the MP2888B NVVDD controller |
+| I2CC SDA + SCL (`GP0` / `GP1`) | **yes** | PMBus to the MP2888B NVVDD controller |
 | `PEX_RST` (`GP22`) | **yes** | fundamental reset (`PEX_RST_BUF*`); its release edge is `t = 0` |
 
 That's it — four wires.
 
-A direct **common ground** wire between the Pico and the GPU PCB is highly recommended.
+A direct **common ground** wire between the Pico and the GPU PCB is highly recommended. You may choose whatever points are convinient for you on the Pico and the GPU PCB.
 
-![Wiring block diagram: GP0 to I2CC_SDA, GP1 to I2CC_SCL, GP22 to PEX_RST_BUF*](docs/images/wiring-diagram.jpg)
-
-![RP2350B-Plus-W mounted on the back of a CMP 170HX showing GND, GP0/GP1 (I2CC), GP22 (PEX_RST_BUF*)](docs/images/board-wiring-overview.jpg)
-
-![Close-up of the I2CC tap points near Q808 and the PEX_RST_BUF* tap at U809](docs/images/tap-points-closeup.jpg)
+![Recommended points for connecting to I2CC and PEX_RST_BUF*](docs/images/better_pic.png)
 
 The `PEX_RST` tap must be a **direct** wire (no series resistor) — U809 drives that
 net push-pull, so a series resistor keeps the Pico from pulling it below V_IL.
