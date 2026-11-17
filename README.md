@@ -53,7 +53,7 @@ That's it — four wires.
 
 A direct **common ground** wire between the Pico and the GPU PCB is highly recommended. You may choose whatever points are convinient for you on the Pico and the GPU PCB.
 
-![Recommended points for connecting to I2CC and PEX_RST_BUF*](docs/images/better_pic.png)
+![Recommended points for connecting to I2CC and PEX_RST_BUF*](docs/images/better_pic(from@ichundes).png)
 
 The `PEX_RST` tap must be a **direct** wire (no series resistor) — U809 drives that
 net push-pull, so a series resistor keeps the Pico from pulling it below V_IL.
